@@ -1,0 +1,32 @@
+{
+  "name": "node-auth-airtable",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vaultvision/node-auth-airtable.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/vaultvision/node-auth-airtable/issues"
+  },
+  "homepage": "https://github.com/vaultvision/node-auth-airtable#readme",
+  "dependencies": {
+    "cookie-parser": "^1.4.6",
+    "devmon": "^0.0.1",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "express-session": "^1.17.3",
+    "jsonwebtoken": "^8.5.1",
+    "jwks-rsa": "^3.0.0",
+    "morgan": "^1.10.0",
+    "node-fetch": "^2.6.7",
+    "nodemon": "^2.0.20",
+    "openid-client": "^5.3.0"
+  }
+}
