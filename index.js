@@ -8,8 +8,6 @@ const logger = require('morgan');
 const createError = require('http-errors');
 const cookieParser = require('cookie-parser');
 const openidClient = require("openid-client");
-const jwksRsa = require('jwks-rsa');
-const jwt = require('jsonwebtoken');
 const fetch = require("node-fetch");
 
 // Config
@@ -18,9 +16,9 @@ require("dotenv").config();
 const config = {
     "SESSION_SECRET": process.env.SESSION_SECRET,
     "BASE_URL": process.env.BASE_URL,
-    "ISSUER_URL": process.env.ISSUER_URL,
-    "CLIENT_ID": process.env.CLIENT_ID,
-    "CLIENT_SECRET": process.env.CLIENT_SECRET,
+    "VV_ISSUER_URL": process.env.VV_ISSUER_URL,
+    "VV_CLIENT_ID": process.env.VV_CLIENT_ID,
+    "VV_CLIENT_SECRET": process.env.VV_CLIENT_SECRET,
     "PROXY_TARGET_URL": process.env.PROXY_TARGET_URL || "https://api.airtable.com",
     "AIR_TABLE_API_TOKEN": process.env.AIR_TABLE_API_TOKEN,
     "FRONT_SITE_URL": process.env.FRONT_SITE_URL,
@@ -29,22 +27,35 @@ const config = {
 const oidcCallbackUrl = new URL('/oidc/callback', config.BASE_URL).toString();
 const oidcLogoutUrl = new URL('/oidc/logout', config.BASE_URL).toString();
 
-let oidcClient;
-openidClient.Issuer.discover(config.ISSUER_URL).then((iss) => {
-    console.log('Discovered issuer %s %O', iss.issuer, iss.metadata);
-    oidcClient = new iss.Client({
-        client_id: process.env.CLIENT_ID,
-        client_secret: process.env.CLIENT_SECRET,
-        redirect_uris: [config.BASE_URL + "/oidc/callback"],
-        response_types: ['code'],
-    });
-});
+let _oidcClient;
+function getOidcClient() {
+    return new Promise((resolve, reject) => {
+        if (_oidcClient) {
+            resolve(_oidcClient);
+            return;
+        }
 
-const jwksClient = jwksRsa({
-    jwksUri: config.ISSUER_URL + '/.well-known/jwks.json'
-});
+        const cbResolve = (iss) => {
+            _oidcClient = new iss.Client({
+                client_id: config.VV_CLIENT_ID,
+                client_secret: config.VV_CLIENT_SECRET,
+                redirect_uris: [config.BASE_URL + "/auth/callback"],
+                response_types: ['code'],
+            });
+            resolve(_oidcClient);
+        }
+        const cbError = (err) => {
+            console.log("getOidcClientError:", err);
+            reject(err);
+        }
+        openidClient.Issuer.discover(config.VV_ISSUER_URL)
+            .then(cbResolve)
+            .catch(cbError);
+    });
+}
 
 const app = express();
+app.set('view engine', 'ejs');
 app.use(logger('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
@@ -56,8 +67,8 @@ app.use(session({
     httpOnly: true,
     name: "authsess",
     cookie: {
-        secure: false,
-        sameSite: 'none',    // TODO(cstockton): http | https check
+        secure: true,
+        sameSite: 'none',
     },
 }));
 
@@ -80,10 +91,10 @@ app.options("/*", function (req, res, next) {
 })
 
 app.get('/session/jwt', function (req, res, next) {
-    if (req.session.userinfo) {
+    if (req.cookies.authjwt) {
         res.json({
             result: true,
-            userinfo: req.session.userinfo,
+            authjwt: req.cookies.authjwt,
         });
     } else {
         res.json({
@@ -101,20 +112,14 @@ function getKey(header, callback) {
     });
 }
 
-app.get('/debug', function (req, res, next) {
-    console.log(req.session.userinfo);
-    res.json(req.session.userinfo);
-
-});
-
 app.get('/logout', (req, res) => {
     res.clearCookie("authjwt");
     // res.clearCookie("state");
     // res.clearCookie("nonce");
     // res.clearCookie("pkce_code");
 
-    const u = new URL('/logout', config.ISSUER_URL);
-    u.searchParams.set('client_id', config.CLIENT_ID);
+    const u = new URL('/logout', config.VV_ISSUER_URL);
+    u.searchParams.set('VV_CLIENT_ID', config.VV_CLIENT_ID);
     u.searchParams.set('return_to', oidcLogoutUrl);
     res.redirect(u.toString());
 })
@@ -123,18 +128,19 @@ app.get('/login', (req, res) => {
     res.redirect('/oidc/login');
 })
 
+// /oidc/login kicks off the OIDC flow by redirecting to Vault Vision. Once
+// authentication is complete the user will be returned to /oidc/callback.
 app.get('/oidc/login', (req, res) => {
-
-    function processLogin() {
+    getOidcClient().then((oidcClient) => {
         const gens = openidClient.generators;
         const nonce = gens.nonce();
         const state = gens.state();
         const codeVerifier = gens.codeVerifier();
         const codeChallenger = gens.codeChallenge(codeVerifier);
 
-        req.session.code_verifier = codeVerifier
-        req.session.nonce = nonce
-        req.session.state = state
+        req.session.code_verifier = codeVerifier;
+        req.session.nonce = nonce;
+        req.session.state = state;
 
         const redir = oidcClient.authorizationUrl({
             scope: 'openid email profile',
@@ -144,34 +150,18 @@ app.get('/oidc/login', (req, res) => {
             nonce: nonce,
             state: state,
         });
-
-        res.redirect(redir)    
-    };
-
-    if (!oidcClient) {
-        openidClient.Issuer.discover(config.ISSUER_URL).then((iss) => {
-            console.log('Discovered issuer %s %O', iss.issuer, iss.metadata);
-            oidcClient = new iss.Client({
-                client_id: process.env.CLIENT_ID,
-                client_secret: process.env.CLIENT_SECRET,
-                redirect_uris: [config.BASE_URL + "/oidc/callback"],
-                response_types: ['code'],
-            });
-            processLogin();
-        });
-    } else {
-        processLogin();    
-    }
-
-    
-
+        res.redirect(redir);
+    }).catch((err) => {
+        res.redirect(config.FRONT_SITE_URL);
+    });
 });
 
+// Once Vault Vision authenticates a user they will be sent here to complete
+// the OIDC flow.
 app.get('/oidc/callback', (req, res) => {
-
-    function processCallback() {
+    getOidcClient().then((oidcClient) => {
         const oidcParams = oidcClient.callbackParams(req);
-        oidcClient.callback(oidcCallbackUrl, oidcClient.callbackParams(req), {
+        oidcClient.callback(oidcCallbackUrl, oidcParams, {
             code_verifier: req.session.code_verifier,
             state: req.session.state,
             nonce: req.session.nonce,
@@ -180,91 +170,64 @@ app.get('/oidc/callback', (req, res) => {
             req.session.claims = tokenSet.claims();
 
             if (tokenSet.access_token) {
-                // TODO(cstockton): Why doesn't this load into session
                 oidcClient.userinfo(tokenSet.access_token).then((userinfo) => {
-                    req.session.userinfo = userinfo;
-
-                    res.cookie("authjwt", tokenSet.id_token, {
-                        secure: true,
-                        httpOnly: true,
-                        expires: 0,
-                        sameSite: 'none'
+                    req.session.regenerate(function (err) {
+                        if (err) {
+                            next(err);
+                        }
+                        req.session.userinfo = userinfo;
+                        req.session.save(function (err) {
+                            if (err) {
+                                return next(err);
+                            }
+                            res.redirect(config.FRONT_SITE_URL);
+                        });
                     });
-                    res.redirect(config.FRONT_SITE_URL);
                 });
+            } else {
+                res.redirect(config.FRONT_SITE_URL);
             }
         });
-    }
+    }).catch((err) => {
+        console.log(err);
+        res.redirect(config.FRONT_SITE_URL);
+    });
+});
 
-    if (!oidcClient) {
-        openidClient.Issuer.discover(config.ISSUER_URL).then((iss) => {
-            console.log('Discovered issuer %s %O', iss.issuer, iss.metadata);
-            oidcClient = new iss.Client({
-                client_id: process.env.CLIENT_ID,
-                client_secret: process.env.CLIENT_SECRET,
-                redirect_uris: [config.BASE_URL + "/oidc/callback"],
-                response_types: ['code'],
-            });
-            processCallback();
+// Logout clears the cookies and then sends the users to Vault Vision to clear
+// the session, then Vault Vision will redirect the user to /auth/logout.
+app.get('/logout', (req, res, next) => {
+    req.session.userinfo = null;
+    req.session.save(function (err) {
+        if (err) {
+            next(err);
+        }
+        req.session.regenerate(function (err) {
+            if (err) {
+                next(err);
+            }
+
+            const u = new URL('/logout', config.VV_ISSUER_URL);
+            u.searchParams.set('client_id', config.VV_CLIENT_ID);
+            u.searchParams.set('return_to', oidcLogoutUrl);
+            res.redirect(u.toString());
         });
-    } else {
-        processCallback();    
-    }
-    
+    });
 });
 
 app.get('/oidc/logout', (req, res) => {
-    res.clearCookie("authjwt");
     res.redirect(config.FRONT_SITE_URL);
 });
 
 //////////////////////////////////
-function verifyLookupJWT(jwtStr){
-  return p = new Promise((resolve, reject)=>{
-    jwt.verify(
-      jwtStr,
-      getKey,
-      { algorithms: ['RS256'] },
-      function (err, decoded) {
-          console.log("err", err);
-          console.log("decoded", decoded);
-          if (err) {
-            reject(err);
-          } else {
-            resolve(decoded);
-          }
-      }
-    );
-  })
-}
-
 
 function validateJWT(req){
-  //check in cookie first
-  const jwt_from_cookie = req.cookies.authjwt;
-  console.log("req.cookies.authjwt", req.cookies.authjwt);
-  //check in Authorize header second
-  const jwt_from_header = req.headers.authorization;
-  // if it is a Bearer token strip out "Bearer"
-  if (jwt_from_header && jwt_from_header.toLowerCase().startsWith("bearer ")) {
-    jwt_from_header = jwt_from_header.split(" ")[1];
-  }
-
-  //pick the cookie jwt first
-  let jwtStr = "";
-  if (jwt_from_cookie) {
-    jwtStr = jwt_from_cookie;
-  } else if (jwt_from_header) {
-    jwtStr = jwt_from_header;
-  }
-
-  //Verify JWT
-  return verifyLookupJWT(jwtStr)
-  .then((verifyRes)=>{
-    return verifyRes;
-  })
-  .catch((err)=>{
-    throw err;
+  return p = new Promise((resolve, reject)=>{
+    if (req.session.userinfo) {
+      resolve(req.session.userinfo);
+    } else {
+      reject("Session Invalid");
+    }
   })
   
 }
@@ -500,4 +463,3 @@ function recordOwnedByvv_id(path, vv_id){
   })
   .catch(err=>{throw err})
 }
-
