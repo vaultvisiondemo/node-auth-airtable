@@ -67,8 +67,8 @@ app.use(session({
     httpOnly: true,
     name: "authsess",
     cookie: {
-        secure: false,
-        sameSite: 'lax',
+        secure: true,
+        sameSite: 'none',
     },
 }));
 
