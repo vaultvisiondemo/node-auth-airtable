@@ -104,26 +104,6 @@ app.get('/session/jwt', function (req, res, next) {
 });
 
 
-// API Server
-function getKey(header, callback) {
-    jwksClient.getSigningKey(header.kid, function (err, key) {
-        var signingKey = key.publicKey || key.rsaPublicKey;
-        callback(null, signingKey);
-    });
-}
-
-app.get('/logout', (req, res) => {
-    res.clearCookie("authjwt");
-    // res.clearCookie("state");
-    // res.clearCookie("nonce");
-    // res.clearCookie("pkce_code");
-
-    const u = new URL('/logout', config.VV_ISSUER_URL);
-    u.searchParams.set('VV_CLIENT_ID', config.VV_CLIENT_ID);
-    u.searchParams.set('return_to', oidcLogoutUrl);
-    res.redirect(u.toString());
-})
-
 app.get('/login', (req, res) => {
     res.redirect('/oidc/login');
 })
