@@ -39,7 +39,7 @@ function getOidcClient() {
             _oidcClient = new iss.Client({
                 client_id: config.VV_CLIENT_ID,
                 client_secret: config.VV_CLIENT_SECRET,
-                redirect_uris: [config.BASE_URL + "/auth/callback"],
+                redirect_uris: [oidcCallbackUrl, oidcLogoutUrl],
                 response_types: ['code'],
             });
             resolve(_oidcClient);
