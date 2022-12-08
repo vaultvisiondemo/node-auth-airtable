@@ -65,7 +65,7 @@ app.use(session({
     resave: true,
     saveUninitialized: true,
     httpOnly: true,
-    name: "authsess",
+    name: "authsession",
     cookie: {
         secure: true,
         sameSite: 'none',
