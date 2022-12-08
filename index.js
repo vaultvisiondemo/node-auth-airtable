@@ -80,10 +80,10 @@ app.options("/*", function (req, res, next) {
 })
 
 app.get('/session/jwt', function (req, res, next) {
-    if (req.cookies.authjwt) {
+    if (req.session.userinfo) {
         res.json({
             result: true,
-            authjwt: req.cookies.authjwt,
+            userinfo: req.session.userinfo,
         });
     } else {
         res.json({
