@@ -206,7 +206,7 @@ app.get('/oidc/callback', (req, res) => {
                     config.SESSION_SECRET,
                     {
                       expiresIn: "24h",
-                      algorithms: ['HS256'],
+                      algorithm: 'HS256',
                     }
                   );
                   res.cookie("authjwt", token, cookieOptions);
