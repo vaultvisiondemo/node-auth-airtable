@@ -137,7 +137,7 @@ app.options("/*", function (req, res, next) {
     res.json({});
 })
 
-app.get('/cookie/jwt', function (req, res, next) {
+app.get('/session/jwt', function (req, res, next) {
     if (req.cookies.authjwt) {
         res.json({
             result: true,
@@ -189,9 +189,9 @@ app.get('/oidc/callback', (req, res) => {
     getOidcClient().then((oidcClient) => {
         const oidcParams = oidcClient.callbackParams(req);
         oidcClient.callback(oidcCallbackUrl, oidcParams, {
-            code_verifier: req.cookie.code_verifier,
-            state: req.cookie.state,
-            nonce: req.cookie.nonce,
+            code_verifier: req.cookies.code_verifier,
+            state: req.cookies.state,
+            nonce: req.cookies.nonce,
         }).then((tokenSet) => {
             res.clearCookie("code_verifier");
             res.clearCookie("state");
