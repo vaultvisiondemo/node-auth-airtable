@@ -23,8 +23,12 @@ const config = {
     "FRONT_SITE_URL": process.env.FRONT_SITE_URL,
 };
 
-const oidcCallbackUrl = new URL('/oidc/callback', config.BASE_URL).toString();
-const oidcLogoutUrl = new URL('/oidc/logout', config.BASE_URL).toString();
+const callbackPath = '/auth/callback';
+const loginPath = '/auth/login';
+const logoutPath = '/auth/logout';
+
+const oidcCallbackUrl = new URL(callbackPath, config.BASE_URL).toString();
+const oidcLogoutUrl = new URL(logoutPath, config.BASE_URL).toString();
 
 let _oidcClient;
 function getOidcClient() {
@@ -87,7 +91,7 @@ function verifyLookupJWT(jwtStr){
       config.SESSION_SECRET,
       { algorithms: ['HS256'] },
       function (err, decoded) {
-          console.log("err", err);
+          console.log("verifyLookupJWT err", err);
           console.log("decoded", decoded);
           if (err) {
             reject(err);
@@ -137,11 +141,22 @@ app.options("/*", function (req, res, next) {
 })
 
 app.get('/session/jwt', function (req, res, next) {
+    enableCors(req, res);
     if (req.cookies.authjwt) {
-        res.json({
-            result: true,
-            authjwt: req.cookies.authjwt,
-        });
+      verifyLookupJWT(req.cookies.authjwt)
+        .then((verifyRes)=>{
+          console.log("verifyRes", verifyRes);
+          res.json({
+              result: true,
+              userinfo: verifyRes,
+          });          
+        })
+        .catch((err)=>{
+          res.status(500);
+          res.send(JSON.stringify({"error":err}));
+        })
+
+
     } else {
         res.json({
             result: false,
@@ -149,14 +164,17 @@ app.get('/session/jwt', function (req, res, next) {
     }
 });
 
+app.get('/signup', (req, res) => {
+    res.redirect(loginPath + '?vv_action=register');
+})
 
 app.get('/login', (req, res) => {
-    res.redirect('/oidc/login');
+    res.redirect(loginPath);
 })
 
 // /oidc/login kicks off the OIDC flow by redirecting to Vault Vision. Once
 // authentication is complete the user will be returned to /oidc/callback.
-app.get('/oidc/login', (req, res) => {
+app.get(loginPath, (req, res) => {
     getOidcClient().then((oidcClient) => {
         const gens = openidClient.generators;
         const nonce = gens.nonce();
@@ -175,6 +193,7 @@ app.get('/oidc/login', (req, res) => {
             code_challenge_method: 'S256',
             nonce: nonce,
             state: state,
+            vv_action: req.query.vv_action
         });
         res.redirect(redir);
     }).catch((err) => {
@@ -184,7 +203,7 @@ app.get('/oidc/login', (req, res) => {
 
 // Once Vault Vision authenticates a user they will be sent here to complete
 // the OIDC flow.
-app.get('/oidc/callback', (req, res) => {
+app.get(callbackPath, (req, res) => {
     getOidcClient().then((oidcClient) => {
         const oidcParams = oidcClient.callbackParams(req);
         oidcClient.callback(oidcCallbackUrl, oidcParams, {
@@ -209,7 +228,7 @@ app.get('/oidc/callback', (req, res) => {
                     }
                   );
                   res.cookie("authjwt", token, cookieOptions);
-                  res.redirect(config.FRONT_SITE_URL);
+                  res.redirect(config.FRONT_SITE_URL + "#auth_callback");
 
                 });
             } else {
@@ -234,8 +253,8 @@ app.get('/logout', (req, res, next) => {
 
 });
 
-app.get('/oidc/logout', (req, res) => {
-    res.redirect(config.FRONT_SITE_URL);
+app.get(logoutPath, (req, res) => {
+    res.redirect(config.FRONT_SITE_URL + "#auth_logout");
 });
 
 //Single record
@@ -307,7 +326,7 @@ app.get('/v0/:baseid/:table', (req, res) => {
     .catch(err=>{throw err})
   })
   .catch((err)=>{
-    console.log("err", err);
+    //console.log("err", err);
     res.status(401);
     res.send(JSON.stringify({"error":"401 Unauthorized"}));
   })   
@@ -354,7 +373,7 @@ app.post('/v0/:baseid/:table', (req, res) => {
     .catch(err=>{throw err})
   })
   .catch((err)=>{
-    console.log("err", err);
+    //console.log("err", err);
     res.status(401);
     res.send(JSON.stringify({"error":"401 Unauthorized"}));
   })   
@@ -416,7 +435,7 @@ function Upsert(req, res, next, method){
     .catch(err=>{throw err})
   })
   .catch((err)=>{
-    console.log("err", err);
+    //console.log("err", err);
     res.status(401);
     res.send(JSON.stringify({"error":"401 Unauthorized"}));
   }) 
@@ -443,7 +462,13 @@ app.use(function (err, req, res, next) {
     });
 });
 
-app.listen(process.env.PORT || 3000)
+if (process.env.APP_HOST && process.env.APP_HOST === 'localhost') {
+    const server = http.createServer(app);
+    server.listen(8090 || process.env.APP_PORT);
+} else {
+  app.listen(process.env.PORT || 3000)  
+}
+
 
 function recordOwnedByvv_id(path, vv_id){
   // return new Promise((resolve, reject)=>{
