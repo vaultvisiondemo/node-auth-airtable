@@ -21,6 +21,7 @@ const config = {
     "PROXY_TARGET_URL": process.env.PROXY_TARGET_URL || "https://api.airtable.com",
     "AIR_TABLE_API_TOKEN": process.env.AIR_TABLE_API_TOKEN,
     "FRONT_SITE_URL": process.env.FRONT_SITE_URL,
+    "TABLE_ALLOW_LIST_CSV": process.env.TABLE_ALLOW_LIST_CSV || "",
 };
 
 const callbackPath = '/auth/callback';
@@ -29,6 +30,15 @@ const logoutPath = '/auth/logout';
 
 const oidcCallbackUrl = new URL(callbackPath, config.BASE_URL).toString();
 const oidcLogoutUrl = new URL(logoutPath, config.BASE_URL).toString();
+
+let hostCookiePrefix = "__Host-";
+
+//build the array of allowed tables
+//split on comma
+let tableAllowList = config.TABLE_ALLOW_LIST_CSV.split(",");
+//trim all whitespace from each element and lower it so it can be case-insensitive
+tableAllowList = tableAllowList.map(Function.prototype.call, String.prototype.trim);
+tableAllowList = tableAllowList.map(Function.prototype.call, String.prototype.toLowerCase);
 
 let _oidcClient;
 function getOidcClient() {
@@ -70,16 +80,38 @@ const cookieOptions = {
             sameSite: 'none'
         };
 
-var enableCors = function(req, res) {
-  if (req.headers.origin) {
-    res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
-  } else {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+function isAlphaNumeric(val) {
+  if (!val.match(/^[0-9a-z]+$/i))
+    return false;
+  else
+    return true;
+}
+
+function isTableAllowed(table) {
+  //vv_check needs to be first so that it can override the env variable, if a table name starts with vv_ convention should be to auto allow
+  if (table.startsWith('vv_'))
+    return true;
+  else if (!tableAllowList || tableAllowList.length < 1) {
+    return false;
   }
+  else if (tableAllowList[0] === '*')
+    return true;
+  else if (tableAllowList.includes(table))
+    return true;
+  else
+    return false;
+}
+
+var enableCors = function(req, res) {
+  //if local can set 'Access-Control-Allow-Origin' to '*'
+  let originURL = new URL(config.FRONT_SITE_URL);
+  res.setHeader('Access-Control-Allow-Origin', originURL.origin);
+  res.setHeader('Vary', "Origin");
+
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, PUT, DELETE, CONNECT, OPTIONS, TRACE, PATCH');
   res.setHeader('Access-Control-Allow-Headers', 'Access-Control-Allow-Headers, Origin,Accept, X-Requested-With, Content-Type, Access-Control-Request-Method, Access-Control-Request-Headers');
-  res.setHeader('Access-Control-Max-Age', 60 * 60 * 24 * 30);
+  res.setHeader('Access-Control-Max-Age', 60 * 60 * 24 * 30);  //30 days
   res.setHeader('Allow', 'GET, HEAD, POST, PUT, DELETE, CONNECT, OPTIONS, TRACE, PATCH');
 };
 
@@ -105,7 +137,7 @@ function verifyLookupJWT(jwtStr){
 
 function validateJWT(req){
   //check in cookie first
-  const jwt_from_cookie = req.cookies.authjwt;
+  const jwt_from_cookie = req.cookies[hostCookiePrefix + "authjwt"];
 
   //check in Authorize header second
   const jwt_from_header = req.headers.authorization;
@@ -142,8 +174,8 @@ app.options("/*", function (req, res, next) {
 
 app.get('/session/jwt', function (req, res, next) {
     enableCors(req, res);
-    if (req.cookies.authjwt) {
-      verifyLookupJWT(req.cookies.authjwt)
+    if (req.cookies[hostCookiePrefix + "authjwt"]) {
+      verifyLookupJWT(req.cookies[hostCookiePrefix + "authjwt"])
         .then((verifyRes)=>{
           console.log("verifyRes", verifyRes);
           res.json({
@@ -182,9 +214,12 @@ app.get(loginPath, (req, res) => {
         const codeVerifier = gens.codeVerifier();
         const codeChallenger = gens.codeChallenge(codeVerifier);
 
-        res.cookie("code_verifier", codeVerifier, cookieOptions);
-        res.cookie("nonce", nonce, cookieOptions);
-        res.cookie("state", state, cookieOptions);
+        res.cookie(hostCookiePrefix + "code_verifier", codeVerifier, cookieOptions);
+        res.cookie(hostCookiePrefix + "nonce", nonce, cookieOptions);
+        res.cookie(hostCookiePrefix + "state", state, cookieOptions);
+
+        console.log("redirect: ");
+
 
         const redir = oidcClient.authorizationUrl({
             scope: 'openid email profile',
@@ -207,13 +242,13 @@ app.get(callbackPath, (req, res) => {
     getOidcClient().then((oidcClient) => {
         const oidcParams = oidcClient.callbackParams(req);
         oidcClient.callback(oidcCallbackUrl, oidcParams, {
-            code_verifier: req.cookies.code_verifier,
-            state: req.cookies.state,
-            nonce: req.cookies.nonce,
+            code_verifier: req.cookies[hostCookiePrefix + "code_verifier"],
+            state: req.cookies[hostCookiePrefix + "state"],
+            nonce: req.cookies[hostCookiePrefix + "nonce"],
         }).then((tokenSet) => {
-            res.clearCookie("code_verifier");
-            res.clearCookie("state");
-            res.clearCookie("nonce");
+            res.clearCookie(hostCookiePrefix + "code_verifier");
+            res.clearCookie(hostCookiePrefix + "state");
+            res.clearCookie(hostCookiePrefix + "nonce");
             if (tokenSet.access_token) {
                 oidcClient.userinfo(tokenSet.access_token).then((userinfo) => {
 
@@ -227,7 +262,7 @@ app.get(callbackPath, (req, res) => {
                       algorithm: 'HS256',
                     }
                   );
-                  res.cookie("authjwt", token, cookieOptions);
+                  res.cookie(hostCookiePrefix + "authjwt", token, cookieOptions);
                   res.redirect(config.FRONT_SITE_URL + "#auth_callback");
 
                 });
@@ -244,7 +279,7 @@ app.get(callbackPath, (req, res) => {
 // Logout clears the cookies and then sends the users to Vault Vision to clear
 // the cookie, then Vault Vision will redirect the user to /auth/logout.
 app.get('/logout', (req, res, next) => {
-  res.clearCookie("authjwt");
+  res.clearCookie(hostCookiePrefix + "authjwt");
 
   const u = new URL('/logout', config.VV_ISSUER_URL);
   u.searchParams.set('client_id', config.VV_CLIENT_ID);
@@ -259,14 +294,39 @@ app.get(logoutPath, (req, res) => {
 
 //Single record
 app.get('/v0/:baseid/:table/:record', (req, res) => {
+    //must enable Cors before returning a response, otherwise the error code will just be a CORS error
     enableCors(req, res);
+    if (!isAlphaNumeric(req.params.baseid)) {
+      res.status(400);
+      res.send(JSON.stringify({"error":"400 Invalid baseid"}));
+      return;
+    }
+    if (!isAlphaNumeric(req.params.table)) {
+      res.status(400);
+      res.send(JSON.stringify({"error":"400 Invalid table"}));
+      return;     
+    }
+    if (!isTableAllowed(req.params.table)) {
+      res.status(400);
+      res.send(JSON.stringify({"error":"400 Invalid table"}));
+      return;     
+    }
+    if (!isAlphaNumeric(req.params.record)) {
+      res.status(400);
+      res.send(JSON.stringify({"error":"400 Invalid recordid"}));
+      return;      
+    }
+
+    
     let vv_id="";
     validateJWT(req)
     .then((validUser)=>{
       vv_id = validUser.sub;
 
-      const qs = new URLSearchParams(req.query);
-      recordOwnedByvv_id(`/v0/${req.params.baseid}/${req.params.table}/${req.params.record}?${qs}`, vv_id)
+      //deliberately don't support qs, as it can change the field names of vv_id into an id field which can't then be restricted
+      //const qs = new URLSearchParams(req.query);
+      //recordOwnedByvv_id(`/v0/${req.params.baseid}/${req.params.table}/${req.params.record}?${qs}`, vv_id)
+      recordOwnedByvv_id(`/v0/${req.params.baseid}/${req.params.table}/${req.params.record}`, vv_id)
       .then((owned)=>{
         if (owned.id) {
           res.status(200);
@@ -286,8 +346,24 @@ app.get('/v0/:baseid/:table/:record', (req, res) => {
 
 //LIST
 app.get('/v0/:baseid/:table', (req, res) => {
-  console.log("req.cookies.authjwt", req.cookies.authjwt);
   enableCors(req, res);
+  if (!isAlphaNumeric(req.params.baseid)) {
+    res.status(400);
+    res.send(JSON.stringify({"error":"400 Invalid baseid"}));
+    return;
+  }
+  if (!isAlphaNumeric(req.params.table)) {
+    res.status(400);
+    res.send(JSON.stringify({"error":"400 Invalid table"}));
+    return;
+  }
+  if (!isTableAllowed(req.params.table)) {
+    res.status(400);
+    res.send(JSON.stringify({"error":"400 Invalid table"}));
+    return;     
+  }
+  console.log("req.cookies.__Host-authjwt", req.cookies[hostCookiePrefix + "authjwt"]);
+  
   let vv_id="";
   validateJWT(req)
   .then((validUser)=>{
@@ -336,17 +412,54 @@ app.get('/v0/:baseid/:table', (req, res) => {
 //CREATE
 app.post('/v0/:baseid/:table', (req, res) => {
   enableCors(req, res);
+  if (!isAlphaNumeric(req.params.baseid)) {
+    res.status(400);
+    res.send(JSON.stringify({"error":"400 Invalid baseid"}));
+    return;
+  }
+  if (!isAlphaNumeric(req.params.table)) {
+    res.status(400);
+    res.send(JSON.stringify({"error":"400 Invalid table"}));      
+    return;
+  }
+  if (!isTableAllowed(req.params.table)) {
+    res.status(400);
+    res.send(JSON.stringify({"error":"400 Invalid table"}));
+    return;     
+  }  
+  
   let vv_id="";
   validateJWT(req)
   .then((validUser)=>{
     vv_id = validUser.sub;
 
     const newBody = JSON.parse(JSON.stringify(req.body));
+
+
     if (newBody.records && newBody.records.length > 0) {
+
+      //limit updates to 10 records or less
+      if (newBody.records.length > 10) {
+        res.status(400);
+        res.send(JSON.stringify({"error":"400 Too many records, 10 is the maximum amount of records in a single request"}));
+        return; 
+      }
+
       newBody.records.forEach(record=>{
+        //check that the vv_id passed in matches the current user
+        if ((record.fields.vv_id) && (record.fields.vv_id!=vv_id)) {
+          res.status(401);
+          res.send(JSON.stringify({"error":"401 Unauthorized"}));
+          return;      
+        }        
         record.fields["vv_id"]=vv_id;
       })
     } else if (newBody.fields) {
+      if ((newBody.fields["vv_id"]) && (newBody.fields["vv_id"]!=vv_id)) {
+        res.status(401);
+        res.send(JSON.stringify({"error":"401 Unauthorized"}));
+        return;      
+      }         
       newBody.fields["vv_id"]=vv_id;
     } else {
       res.status(400);
@@ -390,6 +503,22 @@ function patchUpsert(req, res, next){
 
 function Upsert(req, res, next, method){
   enableCors(req, res);
+  if (!isAlphaNumeric(req.params.baseid)) {
+    res.status(400);
+    res.send(JSON.stringify({"error":"400 Invalid baseid"}));
+    return;
+  }
+  if (!isAlphaNumeric(req.params.table)) {
+    res.status(400);
+    res.send(JSON.stringify({"error":"400 Invalid table"}));
+    return;
+  }
+  if (!isTableAllowed(req.params.table)) {
+    res.status(400);
+    res.send(JSON.stringify({"error":"400 Invalid table"}));
+    return;     
+  }  
+  
   let vv_id="";
   validateJWT(req)
   .then((validUser)=>{
@@ -405,34 +534,84 @@ function Upsert(req, res, next, method){
     }
     
     if (newBody.records && newBody.records.length > 0) {
-      newBody["performUpsert"]={"fieldsToMergeOn":["vv_id"]};
+
+      //limit updates to 10 records or less
+      if (newBody.records.length > 10) {
+        res.status(400);
+        res.send(JSON.stringify({"error":"400 Too many records, 10 is the maximum amount of records in a single request"}));
+        return; 
+      }
+      const promiseChecks = [];
+      //check to make sure id is not being overridden
       newBody.records.forEach(record=>{
-        record.fields["vv_id"]=vv_id;
+        //check that the vv_id passed in matches the current user
+        if ((record.fields.vv_id) && (record.fields.vv_id!=vv_id)) {
+          res.status(401);
+          res.send(JSON.stringify({"error":"401 Unauthorized"}));
+          return;      
+        }
+        if (record.id) {
+          if (!isAlphaNumeric(record.id)) {
+            res.status(400);
+            res.send(JSON.stringify({"error":"400 Invalid record id"}));
+            return;
+          }
+
+          promiseChecks.push(
+            new Promise((resolve, reject) => {
+              recordOwnedByvv_id(`/v0/${req.params.baseid}/${req.params.table}/${record.id}`, vv_id)
+              .then((owned)=>{
+                if (owned.id) {
+                  resolve({});
+                } else {
+                  reject({"error":"401 Unauthorized"});
+                }      
+              })
+
+            }).catch(error=> {throw error})
+          );      
+        }
+      })      
+
+      Promise.all(promiseChecks)
+      .then(promiseResult=>{
+        newBody["performUpsert"]={"fieldsToMergeOn":["vv_id"]};
+        newBody.records.forEach(record=>{
+          record.fields["vv_id"]=vv_id;
+        })
+        fetch(config.PROXY_TARGET_URL + req.path, {
+          "method": method,
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + config.AIR_TABLE_API_TOKEN
+          },
+          body: JSON.stringify(newBody)
+        })
+        .then((data)=>{
+          return data.json();
+        })
+        .then(json=>{
+          //TODO check different status to return errors if they happened
+          console.log("json", json);
+          res.status(200);
+          res.send(json);
+          return;
+        })
+        .catch(err=>{throw err})
+
       })
+      .catch(error=>{
+        res.status(400);
+        res.send(JSON.stringify(error));
+        return;
+      })
+
     } else {
       res.status(400);
       res.send(JSON.stringify({"error":"400 Invalid Request No Records"}));
-      return
+      return;
     }
 
-    fetch(config.PROXY_TARGET_URL + req.path, {
-      "method": method,
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + config.AIR_TABLE_API_TOKEN
-      },
-      body: JSON.stringify(newBody)
-    })
-    .then((data)=>{
-      return data.json();
-    })
-    .then(json=>{
-      //TODO check different status to return errors if they happened
-      console.log("json", json);
-      res.status(200);
-      res.send(json);
-    })
-    .catch(err=>{throw err})
   })
   .catch((err)=>{
     //console.log("err", err);
@@ -463,12 +642,13 @@ app.use(function (err, req, res, next) {
 });
 
 if (process.env.APP_HOST && process.env.APP_HOST === 'localhost') {
-    const server = http.createServer(app);
-    server.listen(8090 || process.env.APP_PORT);
+  console.log("localhost");
+  hostCookiePrefix = "";
+  const server = http.createServer(app);
+  server.listen(8090 || process.env.APP_PORT);
 } else {
   app.listen(process.env.PORT || 3000)  
 }
-
 
 function recordOwnedByvv_id(path, vv_id){
   // return new Promise((resolve, reject)=>{

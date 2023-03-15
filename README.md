@@ -3,6 +3,21 @@
 # node-auth-airtable
 A node.js connector designed to be the bridge between a static HTML/JS site and an Airtable database with Vault Vision as the authentication provider.
 
+# Getting Started
+
+## For Local Dev
+
+```bash
+git clone https://github.com/vaultvision/node-auth-airtable
+cd node-auth-airtable
+npm run dev
+```
+
+## Windows option for the last command
+```bash
+npm run devwin
+```
+
 # Who are we?
 
 [Vault Vision](https://docs.vaultvision.com) is built on open source technologies and is committed to building a welcoming community developers can trust.
