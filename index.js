@@ -301,11 +301,6 @@ app.get('/v0/:baseid/:table/:record', (req, res) => {
       res.send(JSON.stringify({"error":"400 Invalid baseid"}));
       return;
     }
-    if (!isAlphaNumeric(req.params.table)) {
-      res.status(400);
-      res.send(JSON.stringify({"error":"400 Invalid table"}));
-      return;     
-    }
     if (!isTableAllowed(req.params.table)) {
       res.status(400);
       res.send(JSON.stringify({"error":"400 Invalid table"}));
@@ -350,11 +345,6 @@ app.get('/v0/:baseid/:table', (req, res) => {
   if (!isAlphaNumeric(req.params.baseid)) {
     res.status(400);
     res.send(JSON.stringify({"error":"400 Invalid baseid"}));
-    return;
-  }
-  if (!isAlphaNumeric(req.params.table)) {
-    res.status(400);
-    res.send(JSON.stringify({"error":"400 Invalid table"}));
     return;
   }
   if (!isTableAllowed(req.params.table)) {
@@ -415,11 +405,6 @@ app.post('/v0/:baseid/:table', (req, res) => {
   if (!isAlphaNumeric(req.params.baseid)) {
     res.status(400);
     res.send(JSON.stringify({"error":"400 Invalid baseid"}));
-    return;
-  }
-  if (!isAlphaNumeric(req.params.table)) {
-    res.status(400);
-    res.send(JSON.stringify({"error":"400 Invalid table"}));      
     return;
   }
   if (!isTableAllowed(req.params.table)) {
@@ -506,11 +491,6 @@ function Upsert(req, res, next, method){
   if (!isAlphaNumeric(req.params.baseid)) {
     res.status(400);
     res.send(JSON.stringify({"error":"400 Invalid baseid"}));
-    return;
-  }
-  if (!isAlphaNumeric(req.params.table)) {
-    res.status(400);
-    res.send(JSON.stringify({"error":"400 Invalid table"}));
     return;
   }
   if (!isTableAllowed(req.params.table)) {
